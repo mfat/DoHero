@@ -11,7 +11,7 @@ class DoHApp(QMainWindow):
         super().__init__()
 
         # Set up the window
-        self.setWindowTitle('DNS-over-HTTPS Tester')
+        self.setWindowTitle('DoHero-DNS-over-HTTPS Query Tool')
         self.setGeometry(100, 100, 500, 550)
 
         # Add a label for the DoH server URL
@@ -41,14 +41,23 @@ class DoHApp(QMainWindow):
         self.result_area.setReadOnly(True)
 
         # Add a button to set the DoH server as the default DNS resolver
-        self.use_server_button = QPushButton('Use this server', self)
+        self.use_server_button = QPushButton('Set as system DNS', self)
         self.use_server_button.move(100, 420)
         self.use_server_button.clicked.connect(self.set_doh_server)
+        self.use_server_button.adjustSize()
+        self.use_server_button.setToolTip('Click to set the DoH server as the default DNS resolver on the system, this requires administrator access.')
 
         # Add a button to reset the DNS resolver to the default value
         self.reset_button = QPushButton('Reset to Default', self)
         self.reset_button.move(300, 420)
         self.reset_button.clicked.connect(self.reset_dns)
+        self.reset_button.setToolTip('Click to remove the custom DOH file and reset the DNS.')
+
+
+         # Add an About button
+        self.about_button = QPushButton('About', self)
+        self.about_button.move(200, 480)
+        self.about_button.clicked.connect(self.show_about)
 
     def send_query(self):
         # Get the DoH server URL and domain name from the text fields
@@ -113,6 +122,16 @@ class DoHApp(QMainWindow):
             self.result_area.setText('Error resetting DNS resolver or removing DoH configuration file')
         except Exception as e:
             self.result_area.setText(f'Error: {e}')
+
+    def show_about(self):
+            text = f'<html><body><p>DoHero is a simple application for querying DNS servers over HTTPS. ' \
+           f'It uses the Python httpx library to send DNS queries in the DoH format and the Python dns library to ' \
+           f'parse DNS messages. The application also provides the ability to set the DoH server as the default ' \
+           f'DNS resolver on the system by creating a configuration file in /etc/systemd/resolved.conf.d/.</p>' \
+           f'<p>Author: mFat</p>' \
+           f'<p>Project Page: <a href="https://github.com/mfat/DoHero">https://github.com/mfat/DoHero</a></p>' \
+           f'</body></html>'
+            QMessageBox.about(self, 'About DoHero', text)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
