@@ -1,197 +1,121 @@
 import sys
-import socket
-import json
-import ssl
-import http.client
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout, QTextEdit, QHBoxLayout, QComboBox, QGroupBox
+import dns.message
+import dns.rdatatype
+import httpx
+import subprocess
+from urllib.parse import urlparse
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QLineEdit, QPushButton, QTextEdit, QInputDialog, QMessageBox
 
-class DNSTester(QWidget):
+class DoHApp(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.initUI()
+        # Set up the window
+        self.setWindowTitle('DNS-over-HTTPS Tester')
+        self.setGeometry(100, 100, 500, 550)
 
-    def initUI(self):
-        self.hostnameLabel = QLabel('Hostname:')
-        self.hostnameEdit = QLineEdit()
-        self.httpButton = QPushButton('Test DNS-over-HTTPS')
-        self.tlsButton = QPushButton('Test DNS-over-TLS')
-        self.resultLabel = QLabel()
-        self.resultText = QTextEdit()
-        self.resultText.setReadOnly(True)
+        # Add a label for the DoH server URL
+        self.doh_label = QLabel('DNS-over-HTTPS Server:', self)
+        self.doh_label.move(50, 50)
 
-        self.dnsTypeLabel = QLabel('DNS Server:')
-        self.dnsTypeCombo = QComboBox()
-        self.dnsTypeCombo.addItem('Cloudflare DNS (HTTPS)')
-        self.dnsTypeCombo.addItem('Google DNS (HTTPS)')
-        self.dnsTypeCombo.addItem('Quad9 DNS (HTTPS)')
-        self.dnsTypeCombo.addItem('Custom DNS (HTTPS)')
-        self.dnsTypeCombo.addItem('Custom DNS (TLS)')
+        # Add a text field for the DoH server URL
+        self.doh_field = QLineEdit('https://dns.google/dns-query', self)
+        self.doh_field.setGeometry(200, 50, 250, 30)
 
-        self.customDoHEdit = QLineEdit()
-        self.customDoHEdit.setPlaceholderText('Enter custom DoH server URL')
-        self.customDoHEdit.setEnabled(True)
+        # Add a label for the domain name
+        self.domain_label = QLabel('Domain Name:', self)
+        self.domain_label.move(50, 100)
 
-        self.customDoTEdit = QLineEdit()
-        self.customDoTEdit.setPlaceholderText('Enter custom DoT server hostname and port (e.g. dns.google:853)')
-        self.customDoTEdit.setEnabled(True)
+        # Add a text field for the domain name
+        self.domain_field = QLineEdit('facebook.com', self)
+        self.domain_field.setGeometry(200, 100, 250, 30)
 
-        self.dnsTypeCombo.currentIndexChanged.connect(self.onDnsTypeChanged)
+        # Add a button to send the DoH query
+        self.query_button = QPushButton('Query', self)
+        self.query_button.move(200, 150)
+        self.query_button.clicked.connect(self.send_query)
 
-        dnsTypeLayout = QHBoxLayout()
-        dnsTypeLayout.addWidget(self.dnsTypeLabel)
-        dnsTypeLayout.addWidget(self.dnsTypeCombo)
+        # Add a text area to display the query result
+        self.result_area = QTextEdit(self)
+        self.result_area.setGeometry(50, 200, 400, 200)
+        self.result_area.setReadOnly(True)
 
-        customDoHLayout = QHBoxLayout()
-        customDoHLayout.addWidget(self.customDoHEdit)
+        # Add a button to set the DoH server as the default DNS resolver
+        self.use_server_button = QPushButton('Use this server', self)
+        self.use_server_button.move(100, 420)
+        self.use_server_button.clicked.connect(self.set_doh_server)
 
-        customDoTLayout = QHBoxLayout()
-        customDoTLayout.addWidget(self.customDoTEdit)
+        # Add a button to reset the DNS resolver to the default value
+        self.reset_button = QPushButton('Reset to Default', self)
+        self.reset_button.move(300, 420)
+        self.reset_button.clicked.connect(self.reset_dns)
 
-        customLayout = QVBoxLayout()
-        customLayout.addLayout(customDoHLayout)
-        customLayout.addLayout(customDoTLayout)
+    def send_query(self):
+        # Get the DoH server URL and domain name from the text fields
+        doh_url = self.doh_field.text()
+        domain = self.domain_field.text()
 
-        customGroupBox = QGroupBox('Custom DNS')
-        customGroupBox.setLayout(customLayout)
-        customGroupBox.setEnabled(True)
+        # Create a DNS query message
+        query = dns.message.make_query(domain, dns.rdatatype.A)
 
-        vbox = QVBoxLayout()
-        vbox.addWidget(self.hostnameLabel)
-        vbox.addWidget(self.hostnameEdit)
-        vbox.addLayout(dnsTypeLayout)
-        vbox.addWidget(customGroupBox)
-        vbox.addWidget(self.httpButton)
-        vbox.addWidget(self.tlsButton)
-        vbox.addWidget(self.resultLabel)
-        vbox.addWidget(self.resultText)
+        # Encode the DNS query in the DoH format
+        body = query.to_wire()
+        headers = {'Content-Type': 'application/dns-message'}
 
-        self.setLayout(vbox)
-
-        self.httpButton.clicked.connect(self.testDoH)
-        self.tlsButton.clicked.connect(self.testDoT)
-
-        self.setGeometry(300, 300, 400, 400)
-        self.setWindowTitle('DNS Tester')
-        self.show()
-
-    def onDnsTypeChanged(self, index):
-        if index == 3:
-            self.customDoHEdit.setEnabled(True)
-            self.customDoTEdit.setEnabled(False)
-            self.customDoTEdit.clear()
-            self.resultText.clear()
-        elif index == 4:
-            self.customDoHEdit.setEnabled(False)
-            self.customDoTEdit.setEnabled(True)
-            self.customDoHEdit.clear()
-            self.resultText.clear()
-        else:
-            self.customDoHEdit.setEnabled(False)
-            self.customDoTEdit.setEnabled(False)
-            self.customDoHEdit.clear()
-            self.customDoTEdit.clear()
-            self.resultText.clear()
-
-    def testDoH(self):
-        self.resultText.clear()
-        hostname = self.hostnameEdit.text()
-        if not hostname:
-            self.resultLabel.setText('Please enter a hostname')
-            return
-
-        dns_server = self.dnsTypeCombo.currentText()
-        if dns_server == 'Cloudflare DNS (HTTPS)':
-            server = 'cloudflare-dns.com'
-            path = '/dns-query'
-        elif dns_server == 'Google DNS (HTTPS)':
-            server = 'dns.google'
-            path = '/resolve'
-        elif dns_server == 'Quad9 DNS (HTTPS)':
-            server = 'dns9.quad9.net'
-            path = '/dns-query'
-        elif dns_server == 'Custom DNS (HTTPS)':
-            server = self.customDoHEdit.text().strip('/')
-            path = ''
-        else:
-            server_port = self.customDoTEdit.text().split(':')
-            if len(server_port) != 2:
-                self.resultText.append('Invalid custom DoT server format')
-                return
-            server = server_port[0]
-            port = int(server_port[1])
-
+        # Send the DNS query over DoH
         try:
-            if path:
-                conn = http.client.HTTPSConnection(server)
-                url = f'https://{server}{path}?name={hostname}&type=A'
-                conn.request('GET', url)
-                response = conn.getresponse()
-                response_text = response.read().decode('utf-8')
-                response_json = json.loads(response_text)
-            else:
-                conn = http.client.HTTPSConnection(server, timeout=5)
-                url = f'{server}?dns={hostname}'
-                conn.request('GET', url)
-                response = conn.getresponse()
-                response_text = response.read().decode('utf-8')
-                response_json = json.loads(response_text)['Answer']
-
-            if 'Answer' in response_json:
-                self.resultText.append(f'{server}: working')
-            else:
-                self.resultText.append(f'{server}: not working')
-        except Exception as e:
-            self.resultText.append(f'{server}: not working')
-
-        self.resultLabel.setText('Results:')
-        self.resultLabel.setStyleSheet('color: black; font-weight: bold;')
-
-    def testDoT(self):
-        self.resultText.clear()
-        hostname = self.hostnameEdit.text()
-        if not hostname:
-            self.resultLabel.setText('Please enter a hostname')
+            response = httpx.post(doh_url, headers=headers, content=body)
+        except httpx.HTTPError as e:
+            self.result_area.setText(f'Error sending DNS query: {e}')
             return
 
-        dns_server = self.dnsTypeCombo.currentText()
-        if dns_server == 'Cloudflare DNS (HTTPS)':
-            self.resultText.append('DNS-over-TLS is not supported by Cloudflare DNS')
-            return
-        elif dns_server == 'Google DNS (HTTPS)':
-            server = 'dns.google'
-            port = 853
-        elif dns_server == 'Quad9 DNS (HTTPS)':
-            server = 'dns.quad9.net'
-            port = 853
-        elif dns_server == 'Custom DNS (TLS)':
-            server_port = self.customDoTEdit.text().split(':')
-            if len(server_port) != 2:
-                self.resultText.append('Invalid custom DoT server format')
-                return
-            server = server_port[0]
-            port = int(server_port[1])
+        # Parse the DNS response
+        response_message = dns.message.from_wire(response.content)
+        answer = response_message.answer[0]
 
+        # Display the DNS answer section in the result area
+        self.result_area.setText(str(answer))
+
+    def set_doh_server(self):
+        # Get the DoH server URL from the text field
+        doh_url = self.doh_field.text()
+
+        # Show a dialog to prompt the user for their sudo password
+        password, ok = QInputDialog.getText(self, 'Enter Password', 'Enter your sudo password:', QLineEdit.Password)
+        if not ok:
+            return
+
+        # Create the DoH configuration file with root privileges
         try:
-            context = ssl.create_default_context()
-            with socket.create_connection((server, port)) as sock:
-                with context.wrap_socket(sock, server_hostname=server) as ssock:
-                    query = b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'
-                    query += bytes([len(hostname)]) + hostname.encode()
-                    query += b'\x00\x00\x01\x00\x01'
-                    ssock.send(query)
-                    response = ssock.recv(1024)
-                    if response:
-                        self.resultText.append(f'{server}:{port} working')
-                    else:
-                        self.resultText.append(f'{server}:{port} not working')
+            config_text = f'[Resolve]\nDNSOverHTTPS=yes\nDNSOverHTTPSURL={doh_url}\n'
+            echo_process = subprocess.Popen(['echo', config_text], stdout=subprocess.PIPE)
+            subprocess.check_call(['sudo', 'tee', '/etc/systemd/resolved.conf.d/doh.conf'], stdin=echo_process.stdout)
+            subprocess.check_call(['sudo', 'systemctl','restart', 'systemd-resolved.service'])
+            self.result_area.setText(f'DoH server {doh_url} set as default DNS resolver')
+        except subprocess.CalledProcessError:
+            self.result_area.setText('Error setting DoH server as default DNS resolver')
         except Exception as e:
-            self.resultText.append(f'{server}:{port} not working')
+            self.result_area.setText(f'Error: {e}')
 
-        self.resultLabel.setText('Results:')
-        self.resultLabel.setStyleSheet('color: black; font-weight: bold;')
+
+    def reset_dns(self):
+        # Show a dialog to prompt the user for their sudo password
+        password, ok = QInputDialog.getText(self, 'Enter Password', 'Enter your sudo password:', QLineEdit.Password)
+        if not ok:
+            return
+
+        # Reset the DNS resolver to the default value and remove the DoH configuration file
+        try:
+            subprocess.check_call(['echo', password, '|', 'sudo', '-S', 'systemctl', 'restart', 'systemd-resolved.service'], shell=True)
+            subprocess.check_call(['sudo', 'rm', '-f', '/etc/systemd/resolved.conf.d/doh.conf'])
+            self.result_area.setText('DNS resolver reset to default value and DoH configuration file removed')
+        except subprocess.CalledProcessError:
+            self.result_area.setText('Error resetting DNS resolver or removing DoH configuration file')
+        except Exception as e:
+            self.result_area.setText(f'Error: {e}')
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    dnstester = DNSTester()
+    window = DoHApp()
+    window.show()
     sys.exit(app.exec_())
