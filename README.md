@@ -1,2 +1,2 @@
 # DoHero
-DoH tester and setter app
+DoH tester and setter app for linux.
