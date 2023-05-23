@@ -1,2 +1,2 @@
-# dnstester
-DoH and DoT tester app
+# Doher
+DoH tester and setter app
